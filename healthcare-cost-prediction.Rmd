@@ -1,0 +1,168 @@
+---
+title: "Untitled"
+author: "Predicting Healthcare Expenditures"
+date: "2024-03-28"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r}
+# Set working directory and load data
+setwd("path/to/your/project")  # Modify the path accordingly
+insurance <- read.csv("insurance.csv")
+
+# Data Summary
+summary(insurance)
+head(insurance)
+
+# Preprocessing: Convert categorical variables to factors
+insurance$smoker <- as.factor(insurance$smoker)
+insurance$region <- as.factor(insurance$region)
+insurance$sex <- as.factor(insurance$sex)
+
+# Exploratory Data Analysis (EDA)
+# Distribution of the target variable 'charges'
+hist(insurance$charges, main="Distribution of Charges", xlab="Charges")
+
+# Boxplot for Charges by Smoking Status
+boxplot(charges ~ smoker, data=insurance, main="Charges by Smoking Status")
+
+# Barplot for Distribution of Smoker Status
+barplot(table(insurance$smoker), main="Distribution of Smoker Status", xlab="Status", ylab="Count", col=c("green", "grey"))
+
+# Barplot for Distribution of Number of Children
+barplot(table(insurance$children), main="Distribution of Number of Children", xlab="Number of Children", ylab="Count", col=rainbow(max(insurance$children) + 1))
+
+# Variable Selection and Diagnostics
+library(MASS)  # For stepAIC
+library(car)  # For VIF
+library(ggplot2)  # For data visualization
+
+# Correlations among numeric predictors
+cor_matrix <- cor(insurance[, sapply(insurance, is.numeric)])
+print(cor_matrix)
+
+# Calculate VIF to assess multicollinearity
+model_vif <- lm(charges ~ ., data=insurance)
+vif_results <- vif(model_vif)
+print(vif_results)
+
+# Simple Linear Regression Models
+# Age vs. Charges
+simple_model1 <- lm(charges ~ age, data = insurance)
+summary(simple_model1)
+
+# BMI vs. Charges
+simple_model2 <- lm(charges ~ bmi, data = insurance)
+summary(simple_model2)
+
+# Smoker vs. Charges
+simple_model3 <- lm(charges ~ smoker, data = insurance)
+summary(simple_model3)
+
+# Multiple Linear Regression
+model2 <- lm(charges ~ sex + bmi + children + sex*bmi, data = insurance)
+summary(model2)
+
+# Final Model without interaction term
+finalmodel <- lm(charges ~ ., data=insurance)
+summary(finalmodel)
+
+# Model Diagnostics
+fit <- lm(charges ~ age + bmi + children + smoker + region + sex, data=insurance)
+
+# Diagnostics plots
+par(mfrow=c(2,2))
+plot(fit)
+
+# Check for linearity
+plot(fit$fitted.values, fit$residuals)
+abline(h=0, col="red")
+
+# Normality of residuals
+shapiro.test(fit$residuals)
+
+# Homoscedasticity test
+ncvTest(fit)
+
+# Independence test (Durbin-Watson)
+library(car)
+durbinWatsonTest(fit)
+
+# Addressing Model Assumption Violations
+
+# Normality Violation
+cooks_d <- cooks.distance(fit)
+influential <- which(cooks_d > (4 / length(cooks_d)))
+insurance_clean <- insurance[-influential,]
+fit_clean <- lm(charges ~ age + bmi + children + smoker + region + sex, data=insurance_clean)
+shapiro.test(residuals(fit_clean))
+
+# Homoscedasticity Violation (Box-Cox Transformation)
+library(MASS)
+bc <- boxcox(fit)
+lambda <- bc$x[which.max(bc$y)]
+insurance$transformed_charges <- (insurance$charges^lambda - 1) / lambda
+fit_transformed <- lm(transformed_charges ~ age + bmi + children + smoker + region + sex, data=insurance)
+ncvTest(fit_transformed)
+
+# Exhaustive Model Selection
+intercept.model <- lm(charges ~ 1, data = insurance)
+full.model <- lm(charges ~ ., data = insurance)
+both <- step(intercept.model, direction="both", scope=formula(full.model), trace=0)
+both$anova
+both$coefficients
+
+# BIC Model Selection
+bothBIC <- step(intercept.model, direction="both", scope=formula(full.model), trace=0, k = log(nrow(insurance)))
+bothBIC$anova
+bothBIC$coefficients
+
+# Generalized Linear Models (GLM) using Gamma Distribution
+insurance$log_charges <- log(insurance$charges)
+model_log <- lm(log_charges ~ ., data=insurance)
+summary(model_log)
+
+GammaModel <- glm(log_charges ~ age + bmi + children + smoker + region + sex,
+                  family = inverse.gaussian(link = "identity"), data = insurance)
+summary(GammaModel)
+
+# Plotting Deviance Residuals
+plot(GammaModel$fitted.values, residuals(GammaModel, type = "deviance"), xlab = "Fitted values", ylab = "Deviance Residuals")
+abline(h = 0, col = "red")
+
+# Overdispersion Check
+overdispersion <- sum(residuals(GammaModel, type="deviance")^2) / GammaModel$df.residual
+print(overdispersion)
+
+# Adding Predictions and Residuals to Dataset
+insurance$predicted <- predict(GammaModel, type = "response")
+insurance$residuals <- residuals(GammaModel, type = "response")
+
+# Residuals vs. Predictors
+plot(insurance$age, insurance$residuals, xlab = "Age", ylab = "Residuals")
+
+# Q-Q Plot for GLM Residuals
+if (!require("DHARMa")) install.packages("DHARMa")
+library(DHARMa)
+simulated <- simulateResiduals(fittedModel = GammaModel)
+plotQQunif(simulated)
+
+# Cross-Validation
+set.seed(2020)
+library(caret)
+train.control <- trainControl(method = "cv", number = 10)
+model1 <- train(charges ~ ., data = insurance, method = "lm", trControl = train.control)
+model2 <- train(charges ~ age + bmi + children + smoker + region + sex,
+                family = inverse.gaussian(link = "identity"), data = insurance, method = "glm", trControl = train.control)
+
+print(model1)
+print(model2)
+
+```
